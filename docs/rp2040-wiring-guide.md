@@ -206,10 +206,111 @@ pio device monitor -p /dev/ttyACM1 -b 115200
 | Processing/pkt | 188µs (raw) | <140µs (est.) | <200µs |
 | Throughput | 838.8 kbps | 2000+ kbps | ≥2000 |
 
+## Soldering Instructions
+
+### Tools Required
+- Fine-tip soldering iron (chisel tip preferred, ~0.5-1mm)
+- Leaded solder (63/37 or 60/40, 0.5mm diameter) — flows better than lead-free for delicate work
+- Flux pen or gel (essential for castellated pads and fine-pitch work)
+- Solder wick (desoldering braid, 2mm width)
+- Tweezers (fine-tipped, non-magnetic)
+- Isopropyl alcohol + brush for flux cleanup
+- Helping hands (third hand) or PCB vise
+- Magnifying lamp or loupe (3-5x) — inspect joints and detect bridges
+- Multimeter (continuity mode) — verify no shorts before powering on
+- Kapton tape — hold wires in place during soldering
+
+### Solder Order (critical sequence)
+
+Solder in this order to avoid damaging previously soldered components or blocking access:
+
+1. **RP2040-Zero pin headers** — Solder male pin header to RP2040-Zero first. The board comes as a bare PCB with castellated edges; a 2×20 pin header (0.1" pitch) gives you access to all GPIOs. Insert pins from bottom, solder from top. Trim excess pin length on bottom.
+
+2. **LR2021 module (most delicate step)** — Solder the NiceRF LR2021 to a small prototyping board or directly to wires BEFORE attaching to the RP2040. The 18 castellated pads are on 1.27mm pitch — use flux generously. Tin each pad on the LR2021 first, then align and reflow each joint. Inspect with magnification for bridges between adjacent pads (especially pins 1-2, 3-4-5, 7-8, 11-12, 17-18 — VCC/GND/MISO pairs and adjacent GNDs).
+
+3. **RP2040-Zero to prototyping board** — Mount the pin-headered RP2040-Zero onto a small perfboard or protoboard so you have a stable platform. Solder all 40 pin header joints.
+
+4. **LR2021 to prototyping board** — Run solid-core 30AWG Kynar (wire-wrap) wire from each LR2021 pad to the prototyping board, then from the prototyping board to the RP2040 GPIO pins. **Do NOT solder directly to RP2040 castellated pads** — the pin header gives you accessible connection points on the perfboard.
+
+5. **ESP32-C3 connections (UART + power)** — Solder wires from ESP32-C3 GPIO0 (TX), GPIO1 (RX), 3V3, and GND to the matching RP2040 pins (GP21 RX, GP20 TX, 3V3, GND).
+
+6. **Decoupling capacitors** — Solder 100nF (0805) between LR2021 VCC pin and nearest GND. Solder 10µF ceramic on 3.3V rail near LR2021. These are small SMD caps — tin one pad, reflow the cap onto it with tweezers, then solder the second pad.
+
+7. **Antenna wires** — Solder 16.4cm wire to LR2021 Pin 9 (868 MHz quarter-wave). Solder 3.1cm wire to Pin 10 (2.4 GHz quarter-wave). Use a 90° angle between the two antennas for polarization diversity.
+
+8. **Pull-up resistors (if using I2C GPS)** — Solder 4.7kΩ resistors (0805 or through-hole) between SDA → 3.3V and SCL → 3.3V on the I2C bus. Most BMP280 breakouts have these built-in; check with multimeter first.
+
+### LR2021 Soldering Tips
+
+```
+  ┌─── NiceRF LR2021 (top view) ─────────────────┐
+  │  Pin 1  ● VCC       Pin 10 ● 2.4G ANT        │
+  │  Pin 2  ● GND       Pin 11 ● GND             │
+  │  Pin 3  ● MISO      Pin 12 ● GND             │
+  │  Pin 4  ● MOSI      Pin 13 ● (NC)            │
+  │  Pin 5  ● SCK       Pin 14 ● RST             │
+  │  Pin 6  ● NSS       Pin 15 ● DIO9 (IRQ)      │
+  │  Pin 7  ● BUSY      Pin 16 ● DIO8 (NC)       │
+  │  Pin 8  ● GND       Pin 17 ● DIO7 (NC)       │
+  │  Pin 9  ● ANT (868) Pin 18 ● GND             │
+  └───────────────────────────────────────────┘
+```
+
+- **Pin pitch is 1.27mm** — not fine-pitch BGA, but close enough that a solder blob between pins 3-4-5 will ruin SPI communication.
+- **Tin each pad first**: Apply flux to all 18 pads, then drag a tiny solder blob across each pad. Clean with wick if bridges form.
+- **Pre-tin your wires**: Strip 2mm, tin with solder, then hold tinned wire against the tinned LR2021 pad and touch iron to the joint — should flow instantly.
+- **Most common defect**: Bridge between Pin 1 (VCC) and Pin 2 (GND) — shorts 3.3V to ground. Test continuity between pins 1 and 2 before powering on.
+
+### Wire Dressing
+
+- Keep **SCK (Pin 5) and MOSI (Pin 4) wires as short as possible** (< 5cm from LR2021 to RP2040) — long SPI wires radiate noise and reduce max clock speed.
+- Twist MISO/MOSI/SCK together or run them as a ribbon to reduce crosstalk.
+- Route **antenna wires away from SPI and power lines** — the 868 MHz antenna (16.4cm) is a quarter-wave radiator; keep it ≥ 2cm from any data or power wire to avoid coupling.
+- Use **Kapton tape** to secure wires at 3-4 points along the run — prevents fatigue breaks during handling.
+
+### Verification After Soldering
+
+Before connecting USB power:
+
+1. **Visual inspection** — magnifying lamp, check every joint. Look for:
+   - Solder bridges (especially LR2021 pins 1-2, 3-4-5, 7-8)
+   - Cold joints (dull, cracked-looking)
+   - Excess solder balls
+   - Wire whiskers
+
+2. **Continuity test (multimeter)** — power OFF:
+   - 3.3V rail to GND — should read **open** (not shorted)
+   - LR2021 Pin 1 (VCC) to GND — open
+   - Each LR2021 signal pin to its target RP2040 GPIO — **< 5Ω**
+   - Adjacent LR2021 pin pairs — open (no bridge)
+
+3. **Power-up test** — Connect USB to RP2040 only (not ESP32-C3 yet):
+   - Measure 3.3V at RP2040 VSYS pin — should be ~3.3V
+   - Measure 3.3V at LR2021 Pin 1 — should be ~3.3V
+   - Feel for hot spots — if any component gets warm fast, power off and recheck for shorts
+
+4. **Firmware test** — Flash RP2040 firmware, monitor serial:
+   - Expect `SELFTEST_WARN` if LR2021 is connected but radio not powered (normal first boot)
+   - Expect `SELFTEST_PASSED` after ESP32-C3 is fully connected and both boards powered
+
+### Common Mistakes
+
+| Mistake | Symptom | Fix |
+|---------|---------|-----|
+| Bridge between LR2021 Pins 3-4-5 | SPI init fails, no radio communication | Desolder with wick, reflow with flux |
+| Bridge Pins 1-2 (VCC-GND) | 3.3V rail goes to 0V, no power | Find bridge with multimeter, wick it |
+| Cold joint on CS (Pin 6) | Intermittent SPI, works sometimes | Reflow with fresh flux + solder |
+| Antenna wire too close to SPI | Reduced range, CRC errors | Reroute antenna ≥ 2cm from SPI lines |
+| RP2040 header pin not fully soldered | Random pin fails self-test | Reflow the suspect pin |
+| Wrong UART crossover (TX↔TX, RX↔RX) | No serial data between boards | Swap GPIO0 and GPIO1 wires |
+| Shared USB power from both boards | Ground loop, potential damage | Power ONE board, jumper 3.3V between them |
+
 ## References
 
 - `docs/adr/015-three-board-hardware-strategy.md` — Three-board architecture decision
 - `mesh-stack/flrc-bench-espidf/THROUGHPUT-OPTIMIZATION-PLAN.md` — Optimization phases
 - `mesh-stack/flrc-bench-espidf/main/fast_rx.cpp` — ESP32-C3 raw SPI bypass reference
+- `mesh-stack/flrc-bench-espidf/CONTINUITY-TEST-PLAN.md` — Post-solder continuity test
+- `mesh-stack/flrc-bench-espidf/SPI-LOOPBACK-TEST-PLAN.md` — Pre-solder SPI verification
 - `firmware/rp2040/src/radio.cpp` — RP2040 raw SPI driver
 - `firmware/rp2040/src/main.cpp` — Dual-core firmware with pin self-test
