@@ -1,3 +1,4 @@
+import glob
 import os
 import subprocess
 import tempfile
@@ -67,6 +68,26 @@ class TestTDMA:
             [os.path.join(COMPONENTS, "tdma", "include")],
         )
         assert "12/12 passed" in out
+
+
+class TestLR2021FLRC:
+    def test_lr2021_flrc_match123_host(self):
+        # RadioLib sources: env override (fork checkout) or the pinned submodule
+        rl_src = os.environ.get("RADIOLIB_SRC") or os.path.join(COMPONENTS, "RadioLib")
+        rl_sources = (
+            glob.glob(os.path.join(rl_src, "src", "Module.cpp"))
+            + glob.glob(os.path.join(rl_src, "src", "modules", "LR11x0", "*.cpp"))
+            + glob.glob(os.path.join(rl_src, "src", "modules", "LR2021", "*.cpp"))
+            + glob.glob(os.path.join(rl_src, "src", "utils", "Cryptography.cpp"))
+        )
+        assert len(rl_sources) > 5, f"no RadioLib sources found under {rl_src}"
+        out = _compile_and_run_c(
+            os.path.join(REPO_ROOT, "tests", "src", "lr2021_flrc_match123", "test_lr2021_flrc_match123.cpp"),
+            rl_sources,
+            [rl_src, os.path.join(rl_src, "src"), os.path.join(rl_src, "src", "modules", "LR2021")],
+            cxx=True,
+        )
+        assert "ALL CHECKS PASSED" in out
 
 
 class TestNostrStore:
