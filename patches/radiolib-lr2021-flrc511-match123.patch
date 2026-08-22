@@ -1,0 +1,306 @@
+From c2fb54095c681ae4b67f14bcafaf7189d464c719 Mon Sep 17 00:00:00 2001
+From: Felix <301398501+felixfelix-bot@users.noreply.github.com>
+Date: Sat, 22 Aug 2026 14:11:19 +0530
+Subject: [PATCH] feat(lr2021): configurable FLRC sync word match + 511-byte
+ payloads
+
+- add setFlrcSyncWordMatch() selecting which FLRC sync words the receiver
+  matches (sw_match bits of SET_FLRC_PACKET_PARAMS): Match1 (default,
+  stock behavior), Match1+2 or Match1+2+3, with new
+  RADIOLIB_LR2021_FLRC_SYNC_MATCH_* constants
+- replace all hardcoded syncMatch=0x01 emissions with the cached value so
+  re-configuration methods (setPreambleLength/setCRC/setSyncWord) preserve it
+- widen fixed/variablePacketLengthMode() to uint16_t and raise the FLRC
+  packet length cap to 511 bytes (16-bit payload length field); all other
+  modems remain capped at 255
+- cache the FLRC payload length so re-configuration preserves it
+- run CALIB_FRONT_END (image rejection, freq/4 + HF path bit) during Rx
+  staging right after SET_RX_PATH, as required before starting Rx
+
+Validated on host against golden SPI frames captured from the RP2040
+range-test firmware (multi_radio_sweep_rx_v4): SET_FLRC_PACKET_PARAMS
+{0x0E, 0x7C, 0x01, 0xFF} for Match123 + fixed 511-byte payloads.
+---
+ src/modules/LR2021/LR2021.cpp        | 47 ++++++++++++++++++++++------
+ src/modules/LR2021/LR2021.h          | 20 ++++++++++--
+ src/modules/LR2021/LR2021_commands.h |  5 +++
+ src/modules/LR2021/LR2021_config.cpp | 45 +++++++++++++++++++++-----
+ 4 files changed, 97 insertions(+), 20 deletions(-)
+
+diff --git a/src/modules/LR2021/LR2021.cpp b/src/modules/LR2021/LR2021.cpp
+index 7595af884..48e7d3762 100644
+--- a/src/modules/LR2021/LR2021.cpp
++++ b/src/modules/LR2021/LR2021.cpp
+@@ -214,14 +214,20 @@ int16_t LR2021::transmit(const uint8_t* data, size_t len, uint8_t addr) {
+       return(RADIOLIB_ERR_PACKET_TOO_LONG);
+     }  
+   } 
+-  if(len > RADIOLIB_LR2021_MAX_PACKET_LENGTH) {
+-    return(RADIOLIB_ERR_PACKET_TOO_LONG);
+-  }
+ 
+   // get currently active modem
+   uint8_t modem = RADIOLIB_LR2021_PACKET_TYPE_NONE;
+   state = getPacketType(&modem);
+   RADIOLIB_ASSERT(state);
++
++  // check packet length - FLRC supports payloads of up to 511 bytes
++  size_t maxLen = RADIOLIB_LR2021_MAX_PACKET_LENGTH;
++  if(modem == RADIOLIB_LR2021_PACKET_TYPE_FLRC) {
++    maxLen = RADIOLIB_LR2021_MAX_PACKET_LENGTH_FLRC;
++  }
++  if(len > maxLen) {
++    return(RADIOLIB_ERR_PACKET_TOO_LONG);
++  }
+   RadioLibTime_t timeout = getTimeOnAir(len);
+   if(modem == RADIOLIB_LR2021_PACKET_TYPE_LORA) {
+     // calculate timeout (150% of expected time-on-air)
+@@ -275,7 +281,12 @@ int16_t LR2021::receive(uint8_t* data, size_t len, RadioLibTime_t timeout) {
+        (modem == RADIOLIB_LR2021_PACKET_TYPE_OOK)) {
+       // calculate timeout (500 % of expected time-one-air)
+       size_t maxLen = len;
+-      if(len == 0) { maxLen = RADIOLIB_LR2021_MAX_PACKET_LENGTH; }
++      if(len == 0) {
++        maxLen = RADIOLIB_LR2021_MAX_PACKET_LENGTH;
++        if(modem == RADIOLIB_LR2021_PACKET_TYPE_FLRC) {
++          maxLen = RADIOLIB_LR2021_MAX_PACKET_LENGTH_FLRC;
++        }
++      }
+       timeoutInternal = (getTimeOnAir(maxLen) * 5) / 1000;
+     
+     } else if(modem == RADIOLIB_LR2021_PACKET_TYPE_LR_FHSS) {
+@@ -859,6 +870,16 @@ int16_t LR2021::stageMode(RadioModeType_t mode, RadioModeConfig_t* cfg) {
+       state = setRxPath(this->highFreq ? RADIOLIB_LR2021_RX_PATH_HF : RADIOLIB_LR2021_RX_PATH_LF, this->highFreq ? this->gainModeHf : this->gainModeLf);
+       RADIOLIB_ASSERT(state);
+ 
++      // calibrate the image-reject front end for the selected Rx path
++      // (CALIB_FRONT_END is mandatory before starting Rx; see LR2021 datasheet)
++      uint16_t calFreq = (uint16_t)((this->freqMHz / 4.0f) + 0.5f);
++      if(this->highFreq) {
++        calFreq |= RADIOLIB_LR2021_CALIBRATE_FE_HF_PATH;
++      }
++      const uint16_t calFreqs[3] = { calFreq, 0x0000, 0x0000 };
++      state = this->calibrateFrontEnd(calFreqs);
++      RADIOLIB_ASSERT(state);
++
+       // set DIO mapping
+       if(cfg->receive.timeout != RADIOLIB_LR2021_RX_TIMEOUT_INF) {
+         cfg->receive.irqMask |= (1UL << RADIOLIB_IRQ_TIMEOUT);
+@@ -884,18 +905,24 @@ int16_t LR2021::stageMode(RadioModeType_t mode, RadioModeConfig_t* cfg) {
+     } break;
+   
+     case(RADIOLIB_RADIO_MODE_TX): {
+-      // check packet length
+-      if(cfg->transmit.len > RADIOLIB_LR2021_MAX_PACKET_LENGTH) {
+-        return(RADIOLIB_ERR_PACKET_TOO_LONG);
+-      }
+-
+       // maximum packet length is decreased by 1 when address filtering is active
+       //! \todo [LR2021] implement GFSK address filtering
+ 
+-      // set packet Length
++      // get the currently active modem
+       uint8_t modem = RADIOLIB_LR2021_PACKET_TYPE_NONE;
+       state = getPacketType(&modem);
+       RADIOLIB_ASSERT(state);
++
++      // check packet length - FLRC supports payloads of up to 511 bytes
++      size_t maxLen = RADIOLIB_LR2021_MAX_PACKET_LENGTH;
++      if(modem == RADIOLIB_LR2021_PACKET_TYPE_FLRC) {
++        maxLen = RADIOLIB_LR2021_MAX_PACKET_LENGTH_FLRC;
++      }
++      if(cfg->transmit.len > maxLen) {
++        return(RADIOLIB_ERR_PACKET_TOO_LONG);
++      }
++
++      // set packet Length
+       if(modem == RADIOLIB_LR2021_PACKET_TYPE_LORA) {
+         state = setLoRaPacketParams(this->preambleLengthLoRa, this->headerType, cfg->transmit.len, this->crcTypeLoRa, this->invertIQEnabled);
+       
+diff --git a/src/modules/LR2021/LR2021.h b/src/modules/LR2021/LR2021.h
+index fb3a41ce4..239d5aacb 100644
+--- a/src/modules/LR2021/LR2021.h
++++ b/src/modules/LR2021/LR2021.h
+@@ -15,6 +15,8 @@
+ // LR2021 physical layer properties
+ #define RADIOLIB_LR2021_FREQUENCY_STEP_SIZE                     1.0
+ #define RADIOLIB_LR2021_MAX_PACKET_LENGTH                       255
++// FLRC packets may be up to 511 bytes long (SET_FLRC_PACKET_PARAMS payload length is 16-bit)
++#define RADIOLIB_LR2021_MAX_PACKET_LENGTH_FLRC                  511
+ #define RADIOLIB_LR2021_CRYSTAL_FREQ                            32.0
+ #define RADIOLIB_LR2021_DIV_EXPONENT                            25
+ 
+@@ -506,14 +508,24 @@ class LR2021: public LRxxxx {
+       \param len Packet length.
+       \returns \ref status_codes
+     */
+-    int16_t fixedPacketLengthMode(uint8_t len = RADIOLIB_LR2021_MAX_PACKET_LENGTH);
++    int16_t fixedPacketLengthMode(uint16_t len = RADIOLIB_LR2021_MAX_PACKET_LENGTH);
+ 
+     /*!
+       \brief Set modem in variable packet length mode. Available in GFSK mode only.
+       \param maxLen Maximum packet length.
+       \returns \ref status_codes
+     */
+-    int16_t variablePacketLengthMode(uint8_t maxLen = RADIOLIB_LR2021_MAX_PACKET_LENGTH);
++    int16_t variablePacketLengthMode(uint16_t maxLen = RADIOLIB_LR2021_MAX_PACKET_LENGTH);
++
++    /*!
++      \brief Sets which FLRC sync words the receiver matches against (sw_match bits
++      of the SET_FLRC_PACKET_PARAMS command). Available in FLRC mode only.
++      \param syncMatch Sync word match configuration: RADIOLIB_LR2021_FLRC_SYNC_MATCH_1
++      (match sync word 1 only, default), RADIOLIB_LR2021_FLRC_SYNC_MATCH_1_2 (match sync
++      words 1 and 2) or RADIOLIB_LR2021_FLRC_SYNC_MATCH_1_2_3 (match sync words 1, 2 and 3).
++      \returns \ref status_codes
++    */
++    int16_t setFlrcSyncWordMatch(uint8_t syncMatch);
+ 
+     /*!
+       \brief Sets GFSK whitening parameters.
+@@ -698,11 +710,13 @@ class LR2021: public LRxxxx {
+     // cached FLRC parameters
+     uint16_t bitRateFlrc = 0;
+     uint8_t codingRateFlrc = 0;
++    uint8_t flrcSyncMatch = RADIOLIB_LR2021_FLRC_SYNC_MATCH_1;
++    uint16_t flrcPayloadLen = RADIOLIB_LR2021_MAX_PACKET_LENGTH;
+ 
+     int16_t modSetup(float freq, float tcxoVoltage, uint8_t modem);
+     bool findChip(void);
+     int16_t config(uint8_t modem);
+-    int16_t setPacketMode(uint8_t mode, uint8_t len);
++    int16_t setPacketMode(uint8_t mode, uint16_t len);
+     int16_t startCad(uint8_t symbolNum, uint8_t detPeak, uint8_t detMin, uint8_t exitMode, RadioLibTime_t timeout);
+ 
+     // chip control commands
+diff --git a/src/modules/LR2021/LR2021_commands.h b/src/modules/LR2021/LR2021_commands.h
+index d858c7807..2d832b158 100644
+--- a/src/modules/LR2021/LR2021_commands.h
++++ b/src/modules/LR2021/LR2021_commands.h
+@@ -507,6 +507,11 @@
+ #define RADIOLIB_LR2021_FLRC_CR_1_0                             (0x02UL << 0)   //  7     0                  1 (uncoded)
+ #define RADIOLIB_LR2021_FLRC_CR_2_3                             (0x03UL << 0)   //  7     0                  2/3
+ 
++// RADIOLIB_LR2021_CMD_SET_FLRC_PACKET_PARAMS
++#define RADIOLIB_LR2021_FLRC_SYNC_MATCH_1                       (0x01UL << 0)   //  5     3     sync word match: sync word 1 only (default)
++#define RADIOLIB_LR2021_FLRC_SYNC_MATCH_1_2                     (0x03UL << 0)   //  5     3                       sync words 1 and 2
++#define RADIOLIB_LR2021_FLRC_SYNC_MATCH_1_2_3                   (0x07UL << 0)   //  5     3                       sync words 1, 2 and 3
++
+ // RADIOLIB_LR2021_CMD_SET_OOK_MODULATION_PARAMS
+ #define RADIOLIB_LR2021_OOK_DEPTH_FULL                          (0x00UL << 0)   //  7     0     magnitude depth: limited by the PA
+ #define RADIOLIB_LR2021_OOK_DEPTH_20_DB                         (0x01UL << 0)   //  7     0                      20 dB maximum
+diff --git a/src/modules/LR2021/LR2021_config.cpp b/src/modules/LR2021/LR2021_config.cpp
+index d01df5d03..fce4b23f8 100644
+--- a/src/modules/LR2021/LR2021_config.cpp
++++ b/src/modules/LR2021/LR2021_config.cpp
+@@ -302,7 +302,7 @@ int16_t LR2021::setPreambleLength(size_t preambleLength) {
+       return(RADIOLIB_ERR_INVALID_PREAMBLE_LENGTH);
+     }
+     this->preambleLengthGFSK = (preambleLength / 4) - 1;
+-    return(setFlrcPacketParams(this->preambleLengthGFSK, this->syncWordLength, 1, 0x01, this->packetType == RADIOLIB_LR2021_GFSK_OOK_PACKET_FORMAT_FIXED, this->crcLenGFSK, RADIOLIB_LR2021_MAX_PACKET_LENGTH));
++    return(setFlrcPacketParams(this->preambleLengthGFSK, this->syncWordLength, 1, this->flrcSyncMatch, this->packetType == RADIOLIB_LR2021_GFSK_OOK_PACKET_FORMAT_FIXED, this->crcLenGFSK, this->flrcPayloadLen));
+ 
+   }
+ 
+@@ -410,7 +410,7 @@ int16_t LR2021::setCRC(uint8_t len, uint32_t initial, uint32_t polynomial, bool
+     }
+     
+     this->crcLenGFSK = len ? len - 1 : 0;
+-    return(setFlrcPacketParams(this->preambleLengthGFSK, this->syncWordLength, 1, 0x01, this->packetType == RADIOLIB_LR2021_GFSK_OOK_PACKET_FORMAT_FIXED, this->crcLenGFSK, RADIOLIB_LR2021_MAX_PACKET_LENGTH));
++    return(setFlrcPacketParams(this->preambleLengthGFSK, this->syncWordLength, 1, this->flrcSyncMatch, this->packetType == RADIOLIB_LR2021_GFSK_OOK_PACKET_FORMAT_FIXED, this->crcLenGFSK, this->flrcPayloadLen));
+       
+   }
+ 
+@@ -599,7 +599,7 @@ int16_t LR2021::setSyncWord(uint8_t* syncWord, size_t len) {
+ 
+       // update sync word length
+       this->syncWordLength = len;
+-      state = setFlrcPacketParams(this->preambleLengthGFSK, this->syncWordLength, 1, 0x01, this->packetType == RADIOLIB_LR2021_GFSK_OOK_PACKET_FORMAT_FIXED, this->crcLenGFSK, RADIOLIB_LR2021_MAX_PACKET_LENGTH);
++      state = setFlrcPacketParams(this->preambleLengthGFSK, this->syncWordLength, 1, this->flrcSyncMatch, this->packetType == RADIOLIB_LR2021_GFSK_OOK_PACKET_FORMAT_FIXED, this->crcLenGFSK, this->flrcPayloadLen);
+       RADIOLIB_ASSERT(state);
+ 
+       sync |= (uint32_t)syncWord[0] << 24;
+@@ -612,6 +612,22 @@ int16_t LR2021::setSyncWord(uint8_t* syncWord, size_t len) {
+   return(RADIOLIB_ERR_WRONG_MODEM);
+ }
+ 
++int16_t LR2021::setFlrcSyncWordMatch(uint8_t syncMatch) {
++  // check active modem
++  uint8_t type = RADIOLIB_LR2021_PACKET_TYPE_NONE;
++  int16_t state = getPacketType(&type);
++  RADIOLIB_ASSERT(state);
++  if(type != RADIOLIB_LR2021_PACKET_TYPE_FLRC) {
++    return(RADIOLIB_ERR_WRONG_MODEM);
++  }
++
++  RADIOLIB_CHECK_RANGE(syncMatch, 0x01, 0x07, RADIOLIB_ERR_INVALID_SYNC_WORD);
++
++  // update the cached value and re-emit packet parameters
++  this->flrcSyncMatch = syncMatch;
++  return(setFlrcPacketParams(this->preambleLengthGFSK, this->syncWordLength, 1, this->flrcSyncMatch, this->packetType == RADIOLIB_LR2021_GFSK_OOK_PACKET_FORMAT_FIXED, this->crcLenGFSK, this->flrcPayloadLen));
++}
++
+ int16_t LR2021::setDataShaping(uint8_t sh) {
+   // check active modem
+   uint8_t type = RADIOLIB_LR2021_PACKET_TYPE_NONE;
+@@ -689,11 +705,11 @@ int16_t LR2021::setEncoding(uint8_t encoding) {
+   return(state);
+ }
+ 
+-int16_t LR2021::fixedPacketLengthMode(uint8_t len) {
++int16_t LR2021::fixedPacketLengthMode(uint16_t len) {
+   return(setPacketMode(RADIOLIB_LR2021_GFSK_OOK_PACKET_FORMAT_FIXED, len));
+ }
+ 
+-int16_t LR2021::variablePacketLengthMode(uint8_t maxLen) {
++int16_t LR2021::variablePacketLengthMode(uint16_t maxLen) {
+   return(setPacketMode(RADIOLIB_LR2021_GFSK_OOK_PACKET_FORMAT_VARIABLE_8BIT, maxLen));
+ }
+ 
+@@ -838,12 +854,16 @@ int16_t LR2021::setRxBoostedGainMode(uint8_t level) {
+   return(state);
+ }
+ 
+-int16_t LR2021::setPacketMode(uint8_t mode, uint8_t len) {
++int16_t LR2021::setPacketMode(uint8_t mode, uint16_t len) {
+   // check active modem
+   uint8_t type = RADIOLIB_LR2021_PACKET_TYPE_NONE;
+   int16_t state = getPacketType(&type);
+   RADIOLIB_ASSERT(state);
+   if(type == RADIOLIB_LR2021_PACKET_TYPE_GFSK) {
++    if(len > RADIOLIB_LR2021_MAX_PACKET_LENGTH) {
++      return(RADIOLIB_ERR_PACKET_TOO_LONG);
++    }
++
+     // set requested packet mode
+     state = setGfskPacketParams(this->preambleLengthGFSK, this->preambleDetLength, false, false, this->addrComp, mode, len, this->crcTypeGFSK, this->whitening);
+     RADIOLIB_ASSERT(state);
+@@ -853,6 +873,10 @@ int16_t LR2021::setPacketMode(uint8_t mode, uint8_t len) {
+     return(state);
+   
+   } else if(type == RADIOLIB_LR2021_PACKET_TYPE_OOK) {
++    if(len > RADIOLIB_LR2021_MAX_PACKET_LENGTH) {
++      return(RADIOLIB_ERR_PACKET_TOO_LONG);
++    }
++
+     // set requested packet mode
+     state = setOokPacketParams(this->preambleLengthGFSK, this->addrComp, mode, len, this->crcTypeGFSK, this->whitening);
+     RADIOLIB_ASSERT(state);
+@@ -862,7 +886,14 @@ int16_t LR2021::setPacketMode(uint8_t mode, uint8_t len) {
+     return(state);
+   
+   } else if(type == RADIOLIB_LR2021_PACKET_TYPE_FLRC) {
+-    state = setFlrcPacketParams(this->preambleLengthGFSK, this->syncWordLength, 1, 0x01, mode == RADIOLIB_LR2021_GFSK_OOK_PACKET_FORMAT_FIXED, this->crcLenGFSK, len);
++    // FLRC supports payloads of up to 511 bytes
++    if(len > RADIOLIB_LR2021_MAX_PACKET_LENGTH_FLRC) {
++      return(RADIOLIB_ERR_PACKET_TOO_LONG);
++    }
++
++    // update the cached length so re-configuration methods preserve it
++    this->flrcPayloadLen = len;
++    state = setFlrcPacketParams(this->preambleLengthGFSK, this->syncWordLength, 1, this->flrcSyncMatch, mode == RADIOLIB_LR2021_GFSK_OOK_PACKET_FORMAT_FIXED, this->crcLenGFSK, this->flrcPayloadLen);
+     RADIOLIB_ASSERT(state);
+ 
+     this->packetType = mode;
+-- 
+2.53.0
+

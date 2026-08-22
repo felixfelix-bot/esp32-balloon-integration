@@ -76,9 +76,11 @@ class TestLR2021FLRC:
         rl_src = os.environ.get("RADIOLIB_SRC") or os.path.join(COMPONENTS, "RadioLib")
         rl_sources = (
             glob.glob(os.path.join(rl_src, "src", "Module.cpp"))
+            + glob.glob(os.path.join(rl_src, "src", "Hal.cpp"))
+            + glob.glob(os.path.join(rl_src, "src", "protocols", "PhysicalLayer", "PhysicalLayer.cpp"))
             + glob.glob(os.path.join(rl_src, "src", "modules", "LR11x0", "*.cpp"))
             + glob.glob(os.path.join(rl_src, "src", "modules", "LR2021", "*.cpp"))
-            + glob.glob(os.path.join(rl_src, "src", "utils", "Cryptography.cpp"))
+            + glob.glob(os.path.join(rl_src, "src", "utils", "*.cpp"))
         )
         assert len(rl_sources) > 5, f"no RadioLib sources found under {rl_src}"
         out = _compile_and_run_c(

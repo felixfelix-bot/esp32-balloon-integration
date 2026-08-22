@@ -48,7 +48,11 @@ int main() {
   Module mod(&hal, 10 /* cs */, 11 /* irq */, 12 /* rst */, 13 /* gpio */);
   LR2021 radio(&mod);
 
-  int16_t st = radio.beginFLRC(2478.0f, 260.0f, RADIOLIB_LR2021_FLRC_CR_3_4, 13, 16, RADIOLIB_SHAPING_0_5);
+  // HF PA is limited to +12 dBm on the LR2021
+  int16_t st = radio.beginFLRC(2478.0f, 260.0f, RADIOLIB_LR2021_FLRC_CR_3_4, 12, 16, RADIOLIB_SHAPING_0_5);
+  if(st != RADIOLIB_ERR_NONE) {
+    printf("beginFLRC failed with code %d\n", (int)st);
+  }
   CHECK(st == RADIOLIB_ERR_NONE, "beginFLRC failed");
 
   // apply the range-test-proven configuration through the public API:

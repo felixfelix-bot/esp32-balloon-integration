@@ -9,8 +9,8 @@ Two-track project:
 
 ## RF Driver: RadioLib
 
-**IMPORTANT**: We use RadioLib v7.6.0 (NOT a custom driver) for LR2021 communication.
-- RadioLib is included as an ESP-IDF component dependency via `idf_component.yml`
+**IMPORTANT**: We use RadioLib for LR2021 communication — via a **forked submodule** (`tracker/firmware/components/RadioLib` → `github.com/felixfelix-bot/RadioLib`, branch `lr2021-flrc-511-match123`, patch mirrored in `patches/radiolib-lr2021-flrc511-match123.patch`). See `docs/radiolib-fork.md` for the why + update policy.
+- Adds: `setFlrcSyncWordMatch()` (Match1/1+2/1+2+3), 511-byte FLRC payloads, CALIB_FRONT_END on Rx staging
 - Supports: LoRa, FLRC, GFSK, OOK, LR-FHSS, O-QPSK, RTToF ranging
 - Has native ESP-IDF support with HAL abstraction layer
 - The custom LR2021 driver in `tracker/firmware/components/lr2021/` is DEPRECATED
