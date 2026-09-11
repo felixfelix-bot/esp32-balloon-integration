@@ -21,6 +21,13 @@
 #define FALLING (0x02)
 #define NOP()  asm volatile ("nop")
 
+// SPI clock for the LR2021 radio on GPSPI2 (SPI2_HOST / GPSPI2). 16 MHz is the
+// LR2021 datasheet maximum SPI clock; staying inside spec improves reliability
+// at range and across temperature/voltage corners. The previous hard-coded
+// 18 MHz ran at bench distance but was above spec (same defect class as
+// balloon-fresh P0.4 t_0b2f5534, whose GDMA HAL sat at 40 MHz).
+#define ESPHAL_C3_SPI_HZ   (16 * 1000 * 1000)
+
 
 class EspHalC3 : public RadioLibHal {
   public:
@@ -127,7 +134,7 @@ class EspHalC3 : public RadioLibHal {
 
       spi_device_interface_config_t dev_cfg = {};
       dev_cfg.mode = 0;
-      dev_cfg.clock_speed_hz = 18000000;
+      dev_cfg.clock_speed_hz = ESPHAL_C3_SPI_HZ;   // 16 MHz (LR2021 datasheet max)
       dev_cfg.spics_io_num = -1;
       dev_cfg.queue_size = 1;
       ret = spi_bus_add_device(SPI2_HOST, &dev_cfg, &this->spiDev);

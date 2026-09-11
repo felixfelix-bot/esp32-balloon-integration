@@ -414,6 +414,9 @@ extern "C" void app_main() {
     ESP_LOGI(TAG, "=== LR2021 ESP-IDF Benchmarker v1.1 ===");
     ESP_LOGI(TAG, "Type HELP for commands");
 
+    printf("  SPI clock = %d Hz\n", ESPHAL_C3_SPI_HZ);
+    fflush(stdout);
+
     esp_task_wdt_deinit();
 
     setvbuf(stdin, NULL, _IONBF, 0);

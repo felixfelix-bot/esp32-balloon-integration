@@ -19,6 +19,9 @@ static const char *TAG = "SPILOOP";
 
 #define TEST_LEN 1000
 
+// SPI speed sweep over a bare jumper wire (MOSI->MISO); no LR2021 is attached,
+// so the LR2021 datasheet clock cap (16 MHz) does not apply to this sweep and the
+// regression gate in tests/test_c3_spi_clock.py deliberately excludes this file.
 static const int spi_speeds[] = {1000000, 4000000, 8000000, 18000000};
 static const int spi_speed_count = sizeof(spi_speeds) / sizeof(spi_speeds[0]);
 
