@@ -148,3 +148,18 @@ config MESHCORE_NODE_NAME
     string "MeshCore node name (max 16 chars)"
     default "balloon-01"
     depends on ENABLE_MESHCORE
+
+config BENCH_CONSOLE
+    bool "BENCH console firmware (HARM-T4 cross-board sweep console)"
+    default n
+    help
+        Replace the tracker application with the BENCH sweep console defined by
+        balloon-e80bench/docs/BENCH-CONSOLE-SPEC.md v1.0: ID?/ROLE/ARM TX/MOD/
+        FREQ/PA/START/STOP/SESSION/CONFIG/STAT?/PRBS/QUIET over USB-CDC, with
+        25-column PKT lines and PRBS-15 payload verification.
+
+        This is bench hardware only: it takes over app_main() and never flies.
+        Build with the bench config, e.g.
+          idf.py -DSDKCONFIG=sdkconfig.bench \
+                 -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.bench.defaults" build
+        See docs/bench-console-esp32.md.

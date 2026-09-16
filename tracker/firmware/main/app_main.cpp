@@ -28,6 +28,10 @@ public:
 };
 #endif
 
+#ifdef CONFIG_BENCH_CONSOLE
+#include "bench_main.h"
+#endif
+
 extern "C" {
 #include "telemetry.h"
 #ifdef CONFIG_ENABLE_BMP280
@@ -380,6 +384,12 @@ static void setup_cli(void) {
 
 extern "C" void app_main(void)
 {
+#ifdef CONFIG_BENCH_CONSOLE
+    /* BENCH sweep console (HARM-T4, docs/bench-console-esp32.md): owns the
+     * board instead of the tracker application — never returns. */
+    bench_console_task_start();
+#endif
+
     vTaskDelay(pdMS_TO_TICKS(2000));
 
     if (rtc_first_boot) {

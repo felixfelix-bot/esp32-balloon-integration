@@ -1,0 +1,23 @@
+# BENCH console bench-firmware build (HARM-T4).
+#
+#   cd tracker/firmware
+#   source ~/esp/esp-idf/export.sh
+#   idf.py -DSDKCONFIG=sdkconfig.bench \
+#          -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.bench.defaults" build
+#
+# sdkconfig.bench is generated and git-ignored. The tracked sdkconfig stays the
+# TRACKER configuration: sdkconfig.defaults* only take effect when the sdkconfig
+# file does not exist yet, which is why the bench build gets its own file name.
+CONFIG_BENCH_CONSOLE=y
+
+# The tracker's 10-second telemetry bench loop must not fight the console.
+CONFIG_BENCH_TEST_MODE=n
+
+# Keep the optional mesh stacks out of the bench image.
+CONFIG_ENABLE_MESHCORE=n
+CONFIG_ENABLE_MESH=n
+CONFIG_ENABLE_TDMA=n
+
+# Long blocking TX bursts / blocking serial reads (bench_main.cpp calls
+# esp_task_wdt_deinit() too, this keeps the image free of the WDT task).
+CONFIG_ESP_TASK_WDT_INIT=n

@@ -577,11 +577,11 @@ static void test_tx_burst_prbs(void)
     emit_reset();
     g_radio.now_us = 0;
 
-    check_str(bench_console_handle_line(&g_st, "START N=2 LEN=16 GAP=40000"),
-              "OK START n=2 len=16 gap_us=40000 src=PRBS", "START TX reply");
+    check_str(bench_console_handle_line(&g_st, "START N=100 LEN=16 GAP=40000"),
+              "OK START n=100 len=16 gap_us=40000 src=PRBS", "START TX reply");
 
-    check_u32(g_radio.tx_calls, 2, "burst sends N packets");
-    check_u32(g_radio.delay_total_us, 80000, "burst honours GAP");
+    check_u32(g_radio.tx_calls, 100, "burst sends N packets");
+    check_u32(g_radio.delay_total_us, 99u * 40000u, "burst honours GAP between packets");
     check(g_radio.sleep_calls == 1, "burst ends with the radio asleep");
     check(g_emit_n == 1, "burst emits one async line");
     if (g_emit_n >= 1) {
@@ -596,11 +596,21 @@ static void test_tx_burst_prbs(void)
     bench_payload_build(want, sizeof(want), 1);
     check(memcmp(g_radio.txlog[1], want, sizeof(want)) == 0,
           "burst pkt 1 payload matches bench_payload_build(seq=1)");
+
+    /* TX-side STAT? (spec §2.10): kbps counts sent_ok * len */
+    g_radio.now_us = 1000000;
+    check_str(bench_console_handle_line(&g_st, "STAT?"),
+              "STAT role=TX sent=100 sent_ok=100 rx=0 crc_err=0 per_x1e6=0 "
+              "elapsed_s=1.0 kbps=12 rssi_avg_dbm=0.0 rssi_min_dbm=0.0 "
+              "rssi_max_dbm=0.0 snr_avg_db=0.0 cr=1 session=1234 config=0 "
+              "replicate=0 drops=0 gap_us=40000 buf=0",
+              "TX STAT? line");
 }
 
 static void test_rx_events_and_stat(void)
 {
     console_reset();
+    bench_console_handle_line(&g_st, "MOD flrc 650 5");
     bench_console_handle_line(&g_st, "SESSION 2608211756");
     bench_console_handle_line(&g_st, "CONFIG 0 1");
     check_u32(g_emit_n, 1, "CONFIG emits CONFIG_START");
@@ -682,7 +692,7 @@ static void test_prbs_verify_on_rx(void)
     bench_console_rx_event(&g_st, -100, 0, 1, payload, sizeof(payload));
     if (g_emit_n >= 1) {
         char *fld[32];
-        char work[BENCH_LINE_MAX];
+        char work[sizeof(g_emit[0])];
         snprintf(work, sizeof(work), "%s", g_emit[0]);
         split_csv(work, fld, 32);
         check_u32((uint32_t)atoi(fld[9]), 0, "PRBS OFF -> bit_err 0");
@@ -697,7 +707,7 @@ static void test_prbs_verify_on_rx(void)
     bench_console_rx_event(&g_st, -100, 0, 1, payload, sizeof(payload));
     if (g_emit_n >= 1) {
         char *fld[32];
-        char work[BENCH_LINE_MAX];
+        char work[sizeof(g_emit[0])];
         snprintf(work, sizeof(work), "%s", g_emit[0]);
         split_csv(work, fld, 32);
         check_u32((uint32_t)atoi(fld[9]), 0, "PRBS ON clean payload -> bit_err 0");
@@ -709,7 +719,7 @@ static void test_prbs_verify_on_rx(void)
     bench_console_rx_event(&g_st, -100, 0, 1, payload, sizeof(payload));
     if (g_emit_n >= 1) {
         char *fld[32];
-        char work[BENCH_LINE_MAX];
+        char work[sizeof(g_emit[0])];
         snprintf(work, sizeof(work), "%s", g_emit[0]);
         split_csv(work, fld, 32);
         check_u32((uint32_t)atoi(fld[4]), 7, "PRBS pkts carry the header seq");

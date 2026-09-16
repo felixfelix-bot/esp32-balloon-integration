@@ -3,6 +3,7 @@
 **/dependencies.lock
 **/sdkconfig.old
 **/sdkconfig
+**/sdkconfig.bench
 node_modules/
 target/
 *.pyc
