@@ -112,6 +112,35 @@ int main() {
     CHECK(params[0] == 0x01, "RX staging did not select the HF (2.4 GHz) path");
   }
 
+  // ---- check 4: TX staging must re-emit the cached sync-match (FIX-T3.1) ----
+  // transmit() -> setMode(RADIOLIB_RADIO_MODE_TX) -> stageMode() used to pass a
+  // hard-coded syncMatch = 0x01 (Match1), so a board that transmitted and then
+  // returned to RX silently fell back to Match1-only reception while its peer
+  // still sent Match123 traffic. Every SET_FLRC_PACKET_PARAMS emitted by a
+  // configured radio must therefore carry the CACHED match value.
+  const size_t paramsBeforeTx = hal.findCmd(0x0249).size();
+  std::vector<uint8_t> txPayload(511, 0xA5);  // fixed-length 511-byte FLRC payload
+  st = radio.transmit(txPayload.data(), txPayload.size());
+  // The mocked IRQ line never asserts, so transmit() always ends in its own
+  // timeout - the SPI frames emitted while STAGING the TX are the subject here.
+  CHECK((st == RADIOLIB_ERR_NONE) || (st == RADIOLIB_ERR_TX_TIMEOUT),
+        "transmit() returned an unexpected error code");
+  {
+    size_t paramsSeen = 0;
+    size_t paramsAfterTx = 0;
+    for(const auto& f : hal.frames) {
+      if((f.size() < 4) || ((((uint16_t)f[0] << 8) | f[1]) != 0x0249)) { continue; }
+      paramsSeen++;
+      if(paramsSeen <= paramsBeforeTx) { continue; }  // checked by checks 1-2
+      paramsAfterTx++;
+      const std::vector<uint8_t> params(f.end() - 4, f.end());
+      printf("tx      0x0249 params: %s (golden: 0E 7C 01 FF)\n", frameHex(params).c_str());
+      CHECK(params == std::vector<uint8_t>({ 0x0E, 0x7C, 0x01, 0xFF }),
+            "TX staging re-emitted a stale sync-match / payload length");
+    }
+    CHECK(paramsAfterTx > 0, "transmit() emitted no SET_FLRC_PACKET_PARAMS");
+  }
+
   if(failures == 0) {
     printf("LR2021 FLRC Match123/511: ALL CHECKS PASSED\n");
     return(0);

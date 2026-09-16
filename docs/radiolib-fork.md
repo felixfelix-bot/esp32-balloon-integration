@@ -21,7 +21,7 @@ see `~/repos/balloon-range-tests`) needs three things stock RadioLib cannot do:
 |---|---|
 | Fork | https://github.com/felixfelix-bot/RadioLib |
 | Branch | `lr2021-flrc-511-match123` (base: upstream `f403b9c3d`, post-7.6.0 master) |
-| Patch file | `patches/radiolib-lr2021-flrc511-match123.patch` (`git am`-able, mirrors the fork commit) |
+| Patch file | `patches/radiolib-lr2021-flrc511-match123.patch` (`git am`-able; now a **2/2 commit series** — the original feature commit + the FIX-T3.1 TX-staging sync-match fix) |
 | Submodule | `tracker/firmware/components/RadioLib` → pinned to fork branch commit |
 | `.gitmodules` | URL points at the fork (NOT `jgromes/RadioLib`) |
 
@@ -69,6 +69,23 @@ Stock RadioLib emits `0x4C` here (`sw_match=001`); the RP2040 v4 range-test
 firmware emits `0x7C`. SET_RX_PATH (`0x0201`) carries path byte `0x01` (HF),
 matching prior art (RadioLib's default boost value `0x04` is a deliberate
 divergence, accepted).
+
+## FIX-T3.1: TX staging sync-match fix (2026-09-16)
+
+The fork's `stageMode(RADIOLIB_RADIO_MODE_TX)` re-emits `SET_FLRC_PACKET_PARAMS`
+and was the **last** call site still passing a hard-coded `syncMatch = 0x01`
+(Match1) instead of the cached `this->flrcSyncMatch`. A board configured for
+Match123 that transmitted and then returned to RX would silently revert to
+Match1-only reception — the cross-board FLRC breakage mode (harmonization plan
+docs/ 2026-08-21 §5). All 6 `setFlrcPacketParams` sites now read the cached
+value (`grep -n "setFlrcPacketParams(this" src/modules/LR2021/*.cpp` shows zero
+remaining hard-coded `0x01`).
+
+Behavior-invariant for stock RadioLib: `flrcSyncMatch` defaults to
+`RADIOLIB_LR2021_FLRC_SYNC_MATCH_1` (0x01), so a radio that never calls
+`setFlrcSyncWordMatch()` emits exactly the same byte1 as before. The host test
+check 4 pins that `transmit()` re-emits the cached match (golden `0E 7C 01 FF`;
+RED pre-fix emitted `0E 4C 01 FF`).
 
 Test: `python3 -m pytest tests/test_c_host.py -k flrc` —
 `TestLR2021FLRC::test_lr2021_flrc_match123_host` (TDD: RED commit `5d88e35`

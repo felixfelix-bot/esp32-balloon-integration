@@ -1,8 +1,8 @@
 From c2fb54095c681ae4b67f14bcafaf7189d464c719 Mon Sep 17 00:00:00 2001
 From: Felix <301398501+felixfelix-bot@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 14:11:19 +0530
-Subject: [PATCH] feat(lr2021): configurable FLRC sync word match + 511-byte
- payloads
+Subject: [PATCH 1/2] feat(lr2021): configurable FLRC sync word match +
+ 511-byte payloads
 
 - add setFlrcSyncWordMatch() selecting which FLRC sync words the receiver
   matches (sw_match bits of SET_FLRC_PACKET_PARAMS): Match1 (default,
@@ -301,6 +301,47 @@ index d01df5d03..fce4b23f8 100644
      RADIOLIB_ASSERT(state);
  
      this->packetType = mode;
+-- 
+2.53.0
+
+
+From bca91a6485e84f3cf171e2033ee7b329f8487e7c Mon Sep 17 00:00:00 2001
+From: Felix <301398501+felixfelix-bot@users.noreply.github.com>
+Date: Wed, 16 Sep 2026 18:09:45 +0200
+Subject: [PATCH 2/2] fix(lr2021): pass the cached FLRC sync match when staging
+ TX
+
+stageMode(RADIOLIB_RADIO_MODE_TX) re-emits SET_FLRC_PACKET_PARAMS and was the
+last call site still passing a hard-coded syncMatch = 0x01 (Match1) instead of
+the cached this->flrcSyncMatch. A board configured for Match123 that
+transmitted and then returned to RX therefore silently reverted to Match1-only
+reception - the cross-board FLRC breakage mode.
+
+Behavior-invariant for stock RadioLib: flrcSyncMatch defaults to
+RADIOLIB_LR2021_FLRC_SYNC_MATCH_1 (0x01), so a radio that never calls
+setFlrcSyncWordMatch() emits exactly the same byte1 as before.
+
+Pinned by the host test check 4 in
+tests/src/lr2021_flrc_match123/test_lr2021_flrc_match123.cpp, which asserts
+every SET_FLRC_PACKET_PARAMS emitted from transmit() carries the cached match
+(golden 0E 7C 01 FF); RED before this commit emitted 0E 4C 01 FF.
+---
+ src/modules/LR2021/LR2021.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/modules/LR2021/LR2021.cpp b/src/modules/LR2021/LR2021.cpp
+index 48e7d3762..6b3fd0b2d 100644
+--- a/src/modules/LR2021/LR2021.cpp
++++ b/src/modules/LR2021/LR2021.cpp
+@@ -933,7 +933,7 @@ int16_t LR2021::stageMode(RadioModeType_t mode, RadioModeConfig_t* cfg) {
+         state = setOokPacketParams(this->preambleLengthGFSK, this->addrComp, this->packetType, cfg->transmit.len, this->crcTypeGFSK, this->whitening);
+ 
+       } else if(modem == RADIOLIB_LR2021_PACKET_TYPE_FLRC) {
+-        state = setFlrcPacketParams(this->preambleLengthGFSK, this->syncWordLength, 1, 0x01, this->packetType == RADIOLIB_LR2021_GFSK_OOK_PACKET_FORMAT_FIXED, this->crcLenGFSK, cfg->transmit.len);
++        state = setFlrcPacketParams(this->preambleLengthGFSK, this->syncWordLength, 1, this->flrcSyncMatch, this->packetType == RADIOLIB_LR2021_GFSK_OOK_PACKET_FORMAT_FIXED, this->crcLenGFSK, cfg->transmit.len);
+       
+       } else {
+         return(RADIOLIB_ERR_WRONG_MODEM);
 -- 
 2.53.0
 
