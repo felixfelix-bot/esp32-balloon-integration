@@ -125,7 +125,7 @@ submodule initialised at the HARM-T3 fork commit.
 cd tracker/firmware
 source ~/esp/esp-idf/export.sh
 
-# (a) default = TRACKER application; bench sources compile out, image unchanged
+# (a) default = TRACKER application; the console app is gated out of the image
 idf.py -B build build
 
 # (b) bench console (own sdkconfig; the tracked sdkconfig stays the tracker's)
@@ -146,11 +146,39 @@ must **not** contain the bench strings, the bench image must.
 * The host suite compiles the component with `gcc -Wall -Wextra -Werror` and
   runs all checks; `tests/test_bench_host.py` fails the build on any mismatch:
 
-  `PYTEST_OUTPUT_PLACEHOLDER`
+  ```
+GATE 1/2 reference run (host gcc, no board):
 
-* Kconfig-gated smoke, both directions:
+  $ /usr/bin/python3 -m pytest tests/test_bench_host.py -q -s
+  == PRBS-15 (spec 4) == ... == console: unsupported E80 extensions ==
+  === Results: 142/142 passed ===
+  1 passed in 0.6s
+```
 
-  `BUILD_EVIDENCE_PLACEHOLDER`
+* Kconfig-gated smoke, both directions (build log + ELF strings, ESP-IDF
+  v5.4.1, `riscv32-esp-elf`, no board attached):
+
+  ```
+  BUILD 1  idf.py -B build build                      (tracker sdkconfig)
+  BUILD1_EXIT=0     1112/1112 steps, "Project build complete."
+                    balloon-tracker.bin 0x3c450 bytes
+    tracker sdkconfig: "# CONFIG_BENCH_CONSOLE is not set"
+    bench strings in build/balloon-tracker.elf:  ESP32BENCH ABSENT
+                                                "TX DONE (RADIO ASLEEP)" ABSENT
+
+  BUILD 2  idf.py -B build/bench -DSDKCONFIG=sdkconfig.bench \
+                   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.bench.defaults" build
+  BUILD2_EXIT=0     1112/1112 steps, "Project build complete."
+                    sdkconfig.bench:480 CONFIG_BENCH_CONSOLE=y
+                    balloon-tracker.bin 0x41e00 bytes
+    compiled: [950/1112] bench_console.c.obj, [1073/1112] bench_main.cpp.obj
+    bench strings in build/bench/balloon-tracker.elf: ESP32BENCH PRESENT
+                                                      "TX DONE (RADIO ASLEEP)" PRESENT
+  ```
+
+  The bench component is compiled in **both** configurations (it cannot rot
+  silently); what the Kconfig gate controls is whether the console application
+  is reachable, hence linked — the tracker ELF contains none of its strings.
 
 * On-target checks are **out of scope** for this card (no flash: the hardware
   session is HARM-T7 and needs FLASH-QUEUE approval).
