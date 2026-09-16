@@ -1,0 +1,3 @@
+ID ESP32BENCH v1.0 fw=esp0001 role=RX armed=0 mod=flrc br=650000 freq=868000000 band=863-870MHz pa=5 pcap=+21dBm chip=2.1 radio=awake buf=4096
+ID RP2040BENCH v1.0 fw=rp200001 role=TX armed=1 mod=flrc br=650000 freq=868000000 band=863-870MHz pa=5 pcap=+12dBm chip=2.1 radio=awake buf=4096
+ID E80BENCH v1.2 fw=88a00cf role=TX armed=1 mod=flrc br=650000 freq=868000000 band=863-870MHz pa=10 pcap=+10dBm chip=2.1 radio=awake boot=jump-ok buf=4096

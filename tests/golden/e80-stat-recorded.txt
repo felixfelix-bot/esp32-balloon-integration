@@ -1,0 +1,2 @@
+STAT role=TX sent=10000 sent_ok=10000 rx=0 crc_err=0 per_x1e6=0 elapsed_s=82.4 kbps=210 rssi_avg_dbm=0.0 snr_avg_db=0.0 drops=0
+STAT role=RX sent=0 sent_ok=0 rx=9970 crc_err=3 per_x1e6=3000 per_ci_x1e6=[19000,33000] elapsed_s=42.5 kbps=63 rssi_avg_dbm=-87.5 snr_avg_db=9.8 drops=0
